@@ -1,0 +1,14 @@
+# dumps brutos grandes, não versiona
+*.bz2
+*.gz
+*.mrt
+data/raw/
+
+# lixo do python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# lixo de sistema
+.DS_Store
