@@ -1,4 +1,3 @@
-pybgpstream
+requests
 pandas
 matplotlib
-requests

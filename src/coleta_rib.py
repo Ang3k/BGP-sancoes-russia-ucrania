@@ -1,18 +1,18 @@
-# pra cada AS russo alvo pega os prefixos que ele anuncia, daí ao longo da janela vai
-# pegando um snapshot de RIB a cada passo_dias e guardando os AS_PATH desses prefixos,
-# isso vira a base das metricas 1, 2 e 3
+# puxa, pra cada prefixo alvo, o estado da tabela (RIB) num instante pela RIPEstat
+# bgp-state, que devolve os AS_PATH que cada peer do RIS via naquele momento, daí pega
+# um snapshot a cada passo_dias ao longo da janela
+# so precisa de requests, bate direto na api, sem pybgpstream
 
 import csv
+import time
 from datetime import datetime, timedelta
 
 import requests
-import pybgpstream
 
 import config
 
 
-# pega os prefixos que um AS anuncia pela RIPEstat, mais facil doque varrer a tabela
-# inteira so pra descobrir os prefixos
+# os prefixos que um AS anuncia, pela RIPEstat
 def prefixos_do_as(numero_as, limite=15):
     url = "https://stat.ripe.net/data/announced-prefixes/data.json"
     resposta = requests.get(url, params={"resource": "AS" + str(numero_as)}, timeout=60)
@@ -22,18 +22,16 @@ def prefixos_do_as(numero_as, limite=15):
     return prefixos_v4[:limite]
 
 
-# pega a RIB de um dia e devolve as linhas dos prefixos que interessam
-def coleta_dia(data, prefixos):
+# o estado da tabela pra um prefixo num dia, devolve os AS_PATH vistos pelos peers do RIS
+def bgp_state(prefixo, data):
+    url = "https://stat.ripe.net/data/bgp-state/data.json"
+    parametros = {"resource": prefixo, "timestamp": data + "T00:00:00"}
+    resposta = requests.get(url, params=parametros, timeout=120)
+    estado = resposta.json()["data"]["bgp_state"]
     linhas = []
-    prefixos_set = set(prefixos)
-    stream = pybgpstream.BGPStream(
-        from_time=data + " 00:00:00", until_time=data + " 00:30:00",
-        collectors=config.coletores, record_type="ribs",
-    )
-    for elem in stream:
-        prefixo = elem.fields.get("prefix")
-        if prefixo in prefixos_set:
-            linhas.append([data, prefixo, elem.fields.get("as-path"), elem.collector])
+    for rota in estado:
+        caminho = " ".join(str(asn) for asn in rota["path"])
+        linhas.append([data, prefixo, caminho, rota.get("source_id", "")])
     return linhas
 
 
@@ -57,11 +55,12 @@ def main():
 
     with open("data/processed/rib_paths.csv", "w", newline="") as saida:
         escritor = csv.writer(saida)
-        escritor.writerow(["data", "prefixo", "as_path", "coletor"])
+        escritor.writerow(["data", "prefixo", "as_path", "peer"])
         for data in dias_da_janela():
-            linhas = coleta_dia(data, prefixos)
-            escritor.writerows(linhas)
-            print(data, len(linhas))
+            for prefixo in prefixos:
+                escritor.writerows(bgp_state(prefixo, data))
+                time.sleep(0.2)   # um respiro pra nao martelar a api
+            print(data, "ok")
 
 
 if __name__ == "__main__":

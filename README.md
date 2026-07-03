@@ -14,10 +14,9 @@ Em concreto: depois das sanções, a Cogent (AS174) saiu do trânsito de redes r
 
 ## Como rodar
 
-Precisa de Python 3 e das libs do `requirements.txt`. A coleta usa o `pybgpstream`, que depende do `libbgpstream` instalado no sistema **antes** do pip:
+Precisa de Python 3 e das libs do `requirements.txt`. A coleta bate direto na RIPEstat Data API, então é só HTTP com `requests`, sem precisar de `libbgpstream` nem nada de sistema:
 
 ```
-# no ubuntu/debian, instalar o libbgpstream primeiro (ver docs do CAIDA/bgpstream)
 pip install -r requirements.txt
 ```
 
@@ -30,8 +29,6 @@ python src/metricas.py          # calcula as métricas a partir dos CSVs
 python src/graficos.py          # gera as figuras do relatório
 python src/caso_kherson.py      # estudo de caso da khersontelecom
 ```
-
-Se o `pybgpstream` der trabalho pra instalar, dá pra fazer quase tudo pela RIPEstat Data API só com `requests` (tá comentado nos scripts onde encaixa).
 
 ## Janela de análise
 
