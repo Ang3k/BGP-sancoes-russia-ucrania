@@ -43,11 +43,14 @@ def prefixos_do_as(numero_as, limite=6):
 # o estado da tabela pra um prefixo num dia, devolve os AS_PATH vistos pelos peers do RIS
 def bgp_state(prefixo, data):
     dados = pega_json("https://stat.ripe.net/data/bgp-state/data.json",
-                      {"resource": prefixo, "timestamp": data + "T00:00:00"})
+                      {"resource": prefixo, "query_time": data + "T00:00:00"})
     if dados is None:
         return []   # pulou esse prefixo nesse dia, segue a vida
+    # as vezes a api responde sem a chave bgp_state (prefixo sem estado naquele instante),
+    # entao pega com get e se nao tiver vira lista vazia, sem quebrar
+    estado = dados.get("data", {}).get("bgp_state", [])
     linhas = []
-    for rota in dados["data"]["bgp_state"]:
+    for rota in estado:
         caminho = " ".join(str(asn) for asn in rota["path"])
         linhas.append([data, prefixo, caminho, rota.get("source_id", "")])
     return linhas
