@@ -1,0 +1,160 @@
+\documentclass[12pt]{article}
+
+\usepackage{sbc-template}
+\usepackage{graphicx,url}
+\usepackage[utf8]{inputenc}
+\usepackage[brazil]{babel}
+
+\sloppy
+
+\title{Sanções e roteamento: a saída da Cogent e da Lumen de redes russas no BGP depois de fevereiro de 2022}
+
+\author{Angel Jesus Fernando Araujo Mansilla\inst{1}, Pedro Henrique Ferrari\inst{1}, \\ Eduardo da Silva Lima\inst{1}, Ruan Matheus Arruda Pontes\inst{1}}
+
+\address{Redes de Computadores, Universidade Federal do Rio de Janeiro (UFRJ)\\
+  DREs: 123691897 (Angel), 123676512 (Pedro), 123695485 (Eduardo), 123700989 (Ruan)
+  \email{angejesufern@gmail.com}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{resumo}
+Depois que a guerra começou em 2022 vieram as sanções, e duas grandes provedoras de trânsito ocidentais, a Cogent (AS174) e a Lumen (AS3356), pararam de atender clientes russos logo no começo de março. A pergunta que esse trabalho tenta responder é se dá pra ver isso no BGP público, ou seja, se essas duas somem dos caminhos das redes russas depois do corte. Pra isso a gente puxou as tabelas de roteamento históricas do RIPE RIS em oito datas de fevereiro a maio de 2022, e mediu quanto a Cogent e a Lumen apareciam como provedor direto das redes russas ao longo do tempo. Pra Rostelecom essa fração caiu de uns 0,35, que era estável, pra 0,24 logo depois do corte, uma queda de cerca de 31\%, e pra TTK o corte foi ainda mais forte no relativo, caiu quase pela metade e não voltou. É um sinal claro e datável, bem colado na janela do corte, e ficou concentrado justo nas redes que usavam essas duas, com outros provedores entrando no lugar. Então o efeito existe e dá pra medir, porém é parcial, oque já rende a discussão de até onde o BGP deixa a gente concluir.
+\end{resumo}
+
+\section{Introdução}
+
+Em fevereiro de 2022 a guerra entre Rússia e Ucrânia veio junto com uma onda de sanções econômicas e tecnológicas, e uma das reações mais concretas do lado da infraestrutura de Internet foi provedor de trânsito ocidental saindo do mercado russo: a Cogent (AS174) anunciou que ia parar de atender clientes na Rússia por volta de 4 de março, e a Lumen (a antiga CenturyLink, AS3356) fez o mesmo lá por 8 de março. Como trânsito é o serviço que leva o tráfego de uma rede pro resto da Internet, encerrar trânsito é o tipo de decisão que, em princípio, tinha que aparecer no roteamento de algum jeito.
+
+A pergunta que guia o trabalho é bem essa, uma decisão comercial motivada por sanção deixa rastro nos dados públicos de BGP? O BGP é o protocolo que anuncia, entre as redes, quais caminhos existem pra cada bloco de endereços, e esses anúncios ficam arquivados publicamente, logo, se a Cogent e a Lumen realmente pararam de fazer trânsito pras redes russas, o esperado é que elas sumam dos caminhos anunciados pros prefixos dessas redes, sendo trocadas por outros provedores.
+
+O tema, no formato que o enunciado pede, é analisar a dimensão A2 (sanções econômicas e tecnológicas) em relação à questão B1 (guerra Rússia e Ucrânia), usando dados públicos de BGP, e o recorte concreto é a mudança nos provedores de trânsito de um conjunto de redes russas. O resto do texto vai assim: a Seção \ref{sec:bgp} explica o mínimo de BGP pra dar pra ler os resultados, a Seção \ref{sec:dados} conta os dados e como a gente puxou, a Seção \ref{sec:resultados} mostra as quatro métricas e o que saiu, a Seção \ref{sec:caso} traz um caso pra ilustrar, a Seção \ref{sec:discussao} discute os limites do que dá pra concluir, e a Seção \ref{sec:conclusao} fecha.
+
+\section{Um pouco de BGP pra entender o resto}
+\label{sec:bgp}
+
+A Internet é um monte de redes independentes chamadas sistemas autônomos (os AS, de \emph{Autonomous System}), cada uma com um número próprio, o ASN. Pro tráfego sair de um ponto e chegar no outro essas redes precisam anunciar umas pras outras quais blocos de endereços (os prefixos) elas alcançam, e por qual caminho, e quem faz esse anúncio é o BGP (\emph{Border Gateway Protocol}). Cada anúncio de um prefixo carrega um atributo que é central aqui, o AS\_PATH, que é a sequência de AS por onde aquele anúncio passou, do sistema que origina o prefixo até quem tá recebendo.
+
+Vale separar dois tipos de relação entre AS. No trânsito um provedor carrega o tráfego do cliente pro resto da Internet, normalmente cobrando por isso, já no peering dois AS trocam tráfego direto entre si sem um pagar o outro. Um provedor de trânsito, justo por levar o tráfego do cliente pra todo lugar, costuma aparecer logo antes do AS de origem no AS\_PATH, ou seja, no papel de upstream direto, e por isso ao longo do trabalho a gente olha principalmente pro AS que vem imediatamente antes do origin no caminho, já que é ele que melhor representa quem tá fazendo o trânsito daquela rede.
+
+Com esse vocabulário, encerrar trânsito tem um efeito esperado no plano de controle, o AS que deixou de fazer trânsito pra uma rede deixa de aparecer como upstream direto dela, e some, ou pelo menos rareia, dos AS\_PATH dos prefixos daquela rede. É esse efeito que a gente vai medir pra Cogent e pra Lumen em relação às redes russas.
+
+\section{Os dados e como a gente puxou}
+\label{sec:dados}
+
+\subsection{De onde vem o dado}
+
+O dado vem das tabelas de roteamento históricas (os RIB dumps, arquivos MRT) do RIPE RIS, do coletor rrc00. Um RIB dump é uma foto da tabela BGP num instante, ou seja, pra cada prefixo, os caminhos que cada peer do coletor via naquele momento. Aqui teve uma pedra no caminho que vale registrar: as APIs "ao vivo" do RIPEstat (tipo bgp-updates e bgplay) têm retenção curta, e em 2026 elas já nem retornavam mais dado de 2022, então não deu pra usar por ali, e a coleta acabou sendo feita direto em cima dos arquivos MRT arquivados, que guardam o histórico pra sempre. Os dumps foram baixados e lidos com a biblioteca mrtparse.
+
+\subsection{A janela e os AS russos}
+
+A análise pega oito datas entre 1 de fevereiro e 1 de maio de 2022, com mais pontos concentrados em cima do evento (1 e 15 de fevereiro, 1, 8 e 15 de março, 1 e 15 de abril, 1 de maio), oque dá três pontos de base antes do corte, um bem em cima (8 de março), e quatro depois, então dá pra ver tanto a queda quanto a recuperação.
+
+Os AS alvo são seis redes russas grandes: Rostelecom (AS12389), Transtelecom, a TTK (AS20485), MTS (AS8359), VimpelCom, a Beeline (AS3216), MegaFon (AS31133) e ER-Telecom (AS9049). Pra cada data a gente coletou os AS\_PATH de todos os prefixos originados por esses AS, do jeito que todos os peers do rrc00 viam, oque dá umas 200 mil rotas por data, e mais ou menos 1,5 milhão de linhas no total.
+
+\subsection{As métricas}
+
+A partir dos AS\_PATH a gente calcula quatro métricas:
+
+\begin{enumerate}
+  \item Fração de rotas com Cogent ou Lumen como upstream direto, por data. Pra cada rede russa, a fração das rotas dela em que o AS logo antes do origin é a Cogent (174) ou a Lumen (3356). É a métrica que mede direto o "encerrar trânsito".
+  \item Composição de upstreams, antes e depois do corte. Pra Rostelecom, quais AS aparecem como upstream direto e com que frequência, comparando o período até o corte com o período de 15 de março em diante.
+  \item Tamanho médio do AS\_PATH, por data. Mede se o reroteamento deixou os caminhos mais longos, oque indicaria troca por rotas menos diretas.
+  \item Concentração do trânsito, por data. A fração das rotas de cada rede que passa pelos cinco maiores upstreams, oque mede o quanto a rede depende de poucos provedores, e se isso muda com o corte.
+\end{enumerate}
+
+Todo número que aparece no texto vem dessa coleta, nada foi chutado.
+
+\section{Métricas e resultados}
+\label{sec:resultados}
+
+\subsection{Cogent e Lumen como trânsito direto ao longo do tempo}
+
+A Figura \ref{fig:g1} mostra a métrica principal. Pra Rostelecom, a fração de rotas com Cogent ou Lumen como upstream direto fica firme em torno de 0,35 nos três pontos antes do corte (0,351 em 1 de fevereiro, 0,357 em 15 de fevereiro, 0,344 em 1 de março), daí no ponto de 8 de março, já em cima da saída da Lumen, cai pra 0,315, e no de 15 de março bate no fundo, 0,242, uma queda de uns 31\% em relação à base, bem colada na janela do corte (4 a 8 de março). Depois vem uma recuperação aos poucos: 0,270 em 1 de abril, 0,315 em 15 de abril e 0,327 em 1 de maio. A TTK mostra um efeito até mais forte no relativo, vinha na faixa de 0,17 a 0,21 antes do corte e desaba pra faixa de 0,10 a 0,11, ou seja quase metade a menos de trânsito via Cogent e Lumen, e diferente da Rostelecom ela não recupera, fica lá embaixo até maio. Somando as duas, o corte tira do plano de controle uma fatia grande e datável do trânsito ocidental dessas redes bem no momento do evento.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.9\textwidth]{g1.pdf}
+\caption{Fração das rotas de redes russas com Cogent (174) ou Lumen (3356) como upstream direto, ao longo do tempo. A faixa marca a janela do corte (4 a 8 de março). A Rostelecom cai de uns 0,35 pra 0,24 logo depois do evento e recupera em parte.}
+\label{fig:g1}
+\end{figure}
+
+Duas coisas valem destaque aqui. Primeiro, a queda não é um efeito geral: das seis redes, só a Rostelecom e a TTK mostram o baque, já MTS, Beeline e MegaFon ficam estáveis, porque não usavam Cogent e Lumen como trânsito de forma relevante, e isso reforça que o sinal é justo das redes que dependiam dessas duas. Segundo, a recuperação parcial mostra que o corte não foi seco nem permanente no plano de controle.
+
+\subsection{Composição de upstreams: quem entrou no lugar}
+
+A Figura \ref{fig:g2} compara os principais upstreams diretos da Rostelecom antes e depois do corte. A Lumen recua de 0,221 pra 0,176, uma queda de uns 20\%, e a Cogent de 0,121 pra 0,113. No sentido contrário aparecem os substitutos: a Vodafone (AS1273) sobe de 0,045 pra 0,052 e a Orange (AS5511) de 0,036 pra 0,045, enquanto a Arelion (AS1299) segue como um upstream grande e estável. Ou seja, o espaço que a Cogent e a Lumen deixaram é ocupado por outros provedores internacionais, e não por um buraco no trânsito.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.9\textwidth]{g2.pdf}
+\caption{Upstreams diretos da Rostelecom, antes e depois do corte. Cogent e Lumen recuam, Vodafone e Orange sobem pra ocupar parte do espaço.}
+\label{fig:g2}
+\end{figure}
+
+\subsection{Tamanho do AS\_PATH: quase parado}
+
+A Figura \ref{fig:g3} mostra o tamanho médio do AS\_PATH dos prefixos alvo. A variação é pequena, fica entre 3,41 e 3,46 na janela toda, com uma leve queda logo no corte (de 3,46 em 1 de março pra 3,43 em 8 de março). Na prática o tamanho dos caminhos quase não muda, e isso já é um resultado: o reroteamento pros substitutos não deixou os caminhos mais longos, oque sugere que as redes russas tinham alternativa de trânsito a uma distância parecida, já pronta pra absorver a saída da Cogent e da Lumen.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.9\textwidth]{g3.pdf}
+\caption{Tamanho médio do AS\_PATH dos prefixos russos alvo (eixo aproximado nos valores). A variação é pequena, o reroteamento não alongou os caminhos.}
+\label{fig:g3}
+\end{figure}
+
+\subsection{Concentração do trânsito}
+
+A última métrica olha pra concentração, ou seja, o quanto o trânsito de cada rede depende de poucos provedores, medida pela fração das rotas que passam pelos cinco maiores upstreams (Figura \ref{fig:g4}). Pra Rostelecom essa fração fica em torno de 0,68 antes do corte, cai pra 0,60 no ponto de 15 de março, logo depois da saída da Cogent e da Lumen, e daí volta a subir aos poucos. A leitura é a mesma dos outros gráficos: ao perder dois provedores grandes de uma vez, o trânsito da Rostelecom se espalhou por mais upstreams menores por um tempo, ficando menos concentrado, e depois foi se reacomodando. A TTK fica mais estável, em torno de 0,48. É mais um sinal do mesmo evento, moderado, porém alinhado com a data.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.9\textwidth]{g4.pdf}
+\caption{Concentração do trânsito das redes russas, medida pela fração das rotas nos cinco maiores upstreams. Pra Rostelecom a concentração cai no 15 de março e recupera aos poucos.}
+\label{fig:g4}
+\end{figure}
+
+\section{Um caso pra ilustrar: a Khersontelecom}
+\label{sec:caso}
+
+Um caso individual ajuda a ver, na prática, a diferença entre origin e trânsito. A Khersontelecom (AS47598), que é uma provedora na região de Kherson, em território ucraniano ocupado, foi bastante reportada por ter passado, lá pro fim de maio de 2022, a ser anunciada via trânsito russo, através da Miranda Media, uma operadora ligada à Rostelecom na Crimeia, deixando de depender do trânsito ucraniano \cite{madory,krebs}. O detalhe é que essa troca foi no trânsito, ou seja, em quem faz o upstream, e não em quem origina o prefixo.
+
+Pra tentar acompanhar isso com os próprios dados, o repositório tem um script (o caso\_kherson.py) que puxa o histórico de roteamento do AS47598 pela routing-history do RIPEstat, que é uma das poucas fontes HTTP que ainda mostra 2022. O que sai dali é que o origin do prefixo da Khersontelecom (o 91.206.110.0/23) fica em AS47598 o tempo todo, de janeiro a junho, sem trocar. Isso, longe de ser um fracasso, reforça bem o ponto da discussão: a mudança de trânsito reportada não aparece como troca de origin, primeiro porque a routing-history mostra origin e a troca foi no upstream, e segundo porque o evento foi no fim de maio, já na borda da janela. Ou seja, origin e trânsito são coisas diferentes, daí uma fonte que só mostra origin não pega uma troca de provedor de trânsito, mesmo quando ela é real e documentada.
+
+\section{O que dá e o que não dá pra concluir}
+\label{sec:discussao}
+
+Essa é a parte que pede mais cuidado, porque é fácil concluir demais em cima de BGP, então deixa eu ir por partes.
+
+Plano de controle não é plano de dados. O BGP mostra anúncio de caminho, não o caminho físico que o pacote percorre, logo, a leitura certa dos resultados não é "o tráfego da Rússia deixou de passar pela Cogent", e sim "os caminhos BGP que a gente observou pras redes russas passaram a ter menos a Cogent e a Lumen como upstream direto". Um AS aparecer ou sumir de um AS\_PATH é sobre oque foi anunciado, não necessariamente sobre por onde os bytes andaram.
+
+O sinal é parcial, e isso importa. A queda existe e tá alinhada com o evento, porém é moderada (de uns 0,35 pra 0,24 no pior ponto) e em boa parte temporária, com recuperação já em abril, então não tem nada no dado que sustente uma leitura de "isolamento da Rússia". Pelo contrário, a troca rápida por Vodafone, Orange e outros, junto com o tamanho de path estável e a concentração que quase não muda, mostra uma rede com trânsito alternativo de sobra, oque aliás bate com análises independentes da época \cite{madory}, que já apontavam impacto real porém limitado.
+
+E tem também o viés de visibilidade, a gente só enxerga oque os peers do rrc00 enxergam, daí um coletor com outro conjunto de peers poderia ver frações diferentes, e caminho que não passa por nenhum peer do RIS simplesmente não aparece. Por isso as frações absolutas têm que ser lidas com essa ressalva, o que é mais firme é a variação antes e depois dentro do mesmo coletor, que é justo o foco das métricas.
+
+O que dá pra dizer, no fim, é que a saída da Cogent e da Lumen deixou um rastro que dá pra observar e datar no roteamento de redes russas específicas (Rostelecom, TTK), e que esse rastro foi em parte compensado por outros provedores. O que não dá é dizer que a Rússia ficou menos conectada, nem tirar volume de tráfego disso, nem tratar as frações como medida exata de dependência. A contribuição honesta do trabalho é mostrar que o sinal geopolítico tá lá, e ao mesmo tempo deixar claro até onde ele autoriza a ir.
+
+\section{Conclusão}
+\label{sec:conclusao}
+
+O trabalho investigou se a saída dos provedores de trânsito ocidentais Cogent e Lumen de redes russas, por causa das sanções, deixa rastro nos dados públicos de BGP. Usando RIB dumps históricos do RIPE RIS em oito datas de 2022, a gente achou um sinal real e alinhado com o evento: a fração de rotas da Rostelecom com Cogent ou Lumen como upstream direto cai de uns 0,35 pra 0,24 logo depois do corte, uma queda de cerca de 31\%, e na TTK o corte é ainda mais forte, quase metade a menos e sem recuperar. O efeito fica concentrado nas redes que usavam essas duas, e o espaço é ocupado por substitutos, com tamanho de path estável e sem grande mudança de concentração. O sinal é, ao mesmo tempo, real e parcial. Como trabalho futuro daria pra cruzar esse sinal de plano de controle com uma fonte de plano de dados (tipo medição de alcance da Cloudflare Radar ou do IODA), e classificar as relações de trânsito com os dados de AS-relationships da CAIDA, pra separar com mais rigor trânsito de peering nos caminhos que a gente vê.
+
+\begin{thebibliography}{9}
+
+\bibitem{madory}
+Madory, D. (2022). Análises da Kentik sobre a conectividade da Rússia em 2022. Kentik Blog.
+
+\bibitem{krebs}
+Krebs on Security (2022). Reportagem sobre a Cogent e a Lumen cortando serviço na Rússia.
+
+\bibitem{ripe}
+RIPE NCC. Routing Information Service (RIS) Raw Data. \url{https://data.ris.ripe.net/}.
+
+\bibitem{caida}
+CAIDA. AS Relationships Dataset. \url{https://www.caida.org/catalog/datasets/as-relationships/}.
+
+\end{thebibliography}
+
+\end{document}
